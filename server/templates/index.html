@@ -1,0 +1,101 @@
+<html>
+<style>
+    body {
+        padding: 2em;
+        font-family: sans-serif;
+        background: #292B36;
+        color: #CCC;
+        line-height: 1.6;
+    }
+
+    a,
+    a:visited {
+        color: #ACF;
+    }
+
+    input{
+        font-family: monospace;
+    }
+
+    #credits {
+        padding-top: 5em;
+        font-size: 0.8em;
+        color: #AAA;
+    }
+</style>
+<body>
+<h1>Hello, <br>I'm your Imagine server, and I am running!</h1>
+
+Now, click <a class="interfaceLink" href="https://lab.toxicode.fr/imagine/?imagineServer=true">this link to access the web interface</a>
+
+<hr>
+{% if queue_time == 0 %}
+<span style="color: rgb(47, 248, 107)">I'm free to work immediately</span>
+{% else %}
+<span style="color: rgb(238, 160, 34)">I'm working on some commands. Estimated queue time: {{queue_time}}s</span>
+{% endif %}
+
+<hr>
+{% if has_tokens %}
+<button id="seeTokens">Show access tokens</button>
+<button id="changeTokens">Change all access tokens</button>
+{% elif can_generate_tokens %}
+
+<form action="/edit_tokens" method="post">
+    <input type="submit" value="Create access tokens" />
+</form>
+
+{% endif %}
+
+<form style="display: none" id="authToSeeTokens" action="/access" method="post">
+    <label for="token">Enter your admin token :</label>
+    <input class="adminToken" type="text" name="token" value="" />
+    <input type="submit" value="Submit" />
+</form>
+
+<form style="display: none" id="authToChangeTokens" action="/edit_tokens" method="post">
+    <label for="token">Enter your admin token :</label>
+    <input class="adminToken" type="text" name="token" value="" />
+    <input type="submit" value="Submit" />
+</form>
+
+<div id="credits">I was made by Pierre Lancien (pierre @ toxicode.fr), specially for Explorers interface.
+</div>
+
+<script>
+    let interfaceLinks = document.getElementsByClassName("interfaceLink")
+    for (let i = 0; i < interfaceLinks.length; i++) {
+        interfaceLinks[i].href = "https://lab.toxicode.fr/imagine/?imagineServer=" + encodeURIComponent(window.location.origin)
+    }
+
+    {% if has_tokens %}
+    let adminToken = localStorage.imagineAdminToken
+    if (adminToken) {
+        let adminTokenInputs = document.getElementsByClassName("adminToken")
+        for (let i = 0; i < adminTokenInputs.length; i++) {
+            adminTokenInputs[i].value = adminToken
+            adminTokenInputs[i].type = 'hidden'
+        }
+    }
+
+    let seeTokensButton = document.getElementById("seeTokens")
+    seeTokensButton.addEventListener("click", function () {
+        if (adminToken) {
+            document.getElementById("authToSeeTokens").submit()
+        } else {
+            seeTokensButton.style.display = "none"
+            document.getElementById("authToSeeTokens").style.display = "block"
+        }
+    })
+
+    let changeTokensButton = document.getElementById("changeTokens")
+    changeTokensButton.addEventListener("click", function () {
+        if (adminToken) {
+            document.getElementById("authToChangeTokens").submit()
+        } else {
+            changeTokensButton.style.display = "none"
+            document.getElementById("authToChangeTokens").style.display = "block"
+        }
+    })
+    {% endif %}
+</script>

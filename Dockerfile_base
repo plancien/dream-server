@@ -1,0 +1,23 @@
+FROM continuumio/miniconda3
+
+# Set bash as default shell, non-interactive
+ENV DEBIAN_FRONTEND noninteractive\
+    SHELL=/bin/bash
+
+# Build with some basic utilities
+RUN apt update && apt-get update && apt-get install -y \
+    openssh-server \
+    unzip \
+    rsync \
+    redis \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+
+
+
+COPY models /workspace/models
+COPY environment.yaml /workspace/environment.yaml
+COPY stable-diffusion /workspace/stable-diffusion
+
+WORKDIR /workspace
+RUN conda env create -f environment.yaml

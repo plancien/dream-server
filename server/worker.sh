@@ -1,0 +1,1 @@
+celery -A tasks worker -P solo --loglevel=INFO

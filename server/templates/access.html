@@ -1,0 +1,88 @@
+<html>
+<style>
+    body {
+        padding: 2em;
+        font-family: sans-serif;
+        background: #292B36;
+        color: #CCC;
+        line-height: 1.6;
+    }
+
+    a,
+    a:visited {
+        color: #ACF;
+    }
+
+    input {
+        font-family: monospace;
+    }
+
+    table{
+        border-collapse: collapse;
+    }
+
+    td{
+        padding: 0.5em;
+        border: 1px solid #CCC;
+    }
+</style>
+
+<body>
+
+    <h2>Access tokens</h2>
+    
+    <table>
+        <tr>
+            <th>Level</th>
+            <th>Token</th>
+            <th>Server url to use</th>
+            <th>Direct link to the interface</th>
+        </tr>
+        {% for token, level in tokens.items(): %}
+            <tr>
+                <td>{{level}}</td>
+                <td>{{token}}</td>
+                <td>
+                    <input type="text" class="prefixWithServerLink" size="70" value="?token={{token}}" />
+                </td>
+                <td><a class="interfaceLink" target="_blank" href="">{{token}}</a></td>
+            </tr>
+        {% endfor %}
+    </table>
+    
+
+    <hr>
+
+    <h2>Usage</h2>
+
+    <table>
+        <tr>
+            <th>IP</th>
+            <th>Count</th>
+            <th>Next time</th>
+        </tr>
+        {% for ip, data in usage.items(): %}
+        <tr>
+            <td>{{ip}}</td>
+            <td>{{data["count"]}}</td>
+            <td>{{data["next_allowed_time"]}}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+
+    <script>
+    {% if admin_token %}
+    localStorage.imagineAdminToken = "{{admin_token}}"
+    {% endif %}
+
+    let prefixWithServerLink = document.getElementsByClassName("prefixWithServerLink")
+        for (let i = 0; i < prefixWithServerLink.length; i++) {
+            prefixWithServerLink[i].value = window.location.origin + prefixWithServerLink[i].value
+        }
+
+    let interfaceLinks = document.getElementsByClassName("interfaceLink")
+    for (let i = 0; i < interfaceLinks.length; i++) {
+        interfaceLinks[i].href = "https://lab.toxicode.fr/imagine/?imagineServer=" + encodeURIComponent(window.location.origin + '?token=' + interfaceLinks[i].innerText)
+    }
+    </script>
