@@ -12,6 +12,7 @@ import os
 import argparse
 import random
 import json
+import base64
 import datetime
 from flask import Flask, request, jsonify, send_file, abort, make_response, render_template
 from flask_cors import CORS, cross_origin
@@ -184,36 +185,23 @@ locked_params = {
     "save_intermediate_every": 1000
 }
 
+
 @app.post("/run")
 @cross_origin()
 def run():
 
     level = auth_level(request)
-    if level == 'quota_expired':
-        return quota_expired()
-    elif level == 'unauthenticated':
-        return unauthenticated()
-    elif level == 'wrong_auth':
-        return wrong_auth()
+    error = error_response_for_level(level)
+
+    if (error):
+        return error
 
     init_time = time.time()
 
     global current_id
 
-
-    seed = request.form.get('seed', default = random.randint(0, 99999999), type = int)
-
-    params = {
-        'prompt':     request.form.get('prompt',   default = "countryside landscape, Trending on artstation."),
-        'W':          min(request.form.get('width',    default = 512, type = int), 2048),
-        'H':          min(request.form.get('height',   default = 512, type = int), 2048),
-        'scale':      request.form.get('guidance',     default = 7.0, type = float),
-        'seed':       seed,
-        'steps':      min(request.form.get('steps',    default = 50, type = int), 150),
-        'n_samples' : min(request.form.get('samples',  default = 1, type = int), 8),
-        'blend_mask': None,
-        'return_changes_only': request.form.get('returnChangesOnly', default = False, type = bool)
-    }
+    params = get_params(request)
+    seed = params['seed']
 
     task_time = time_estimate('txt2img', params)
 
@@ -225,28 +213,10 @@ def run():
             return job_too_soon()
 
 
-
     params = {**params, **locked_params}
     params['file_prefix'] = f"{global_prefix}_{current_id}"
 
-    if 'imageGuide' in request.files and request.files['imageGuide'].filename != '':
-        path = os.path.join(tmp_directory, f"{global_prefix}_{current_id}.png")
-        request.files['imageGuide'].save(path)
-        params['image_guide'] = path
-
-        if 'maskForBlend' in request.files and \
-                request.files['maskForBlend'].filename != '':
-            mask_path = os.path.join(
-                tmp_directory, f"{global_prefix}_{current_id}_mask.png")
-            request.files['maskForBlend'].save(mask_path)
-            params['blend_mask'] = mask_path
-            params['mask_blur'] = max(request.form.get('maskBlur',  default=10, type=int), 0)
-        else:
-            params['strength'] = max(min(request.form.get('strength', default = 0.5, type = float), 0.99), 0.01)
-            
-    else:
-        params['image_guide'] = False
-
+    handle_image_guide(request, params)
 
     current_id += 1
 
@@ -264,43 +234,74 @@ def run():
     start_time = time.time()
     print(f'init time: {start_time - init_time}s')
 
-    response_type = 'image'
-    
-    if response_type == 'image':
-        if time_in_queue < max_time_to_wait_for_answer:
-            try:
-                task.get(timeout=max_time_to_wait_for_answer + 1)
-                reset_allowed_time(request)
-                path = f"{output_directory}/{params['file_prefix']}-0000.png"
+    response_type = request.headers.get('Accept')
 
-                if mock:
-                    path = './mock/king.png'
+    if time_in_queue < max_time_to_wait_for_answer:
+        try:
+            task.get(timeout=max_time_to_wait_for_answer + 1)
+            reset_allowed_time(request)
+            path = f"{output_directory}/{params['file_prefix']}-0000.png"
 
-                response = make_response(send_file(path, download_name='image.png'))
-                response.headers['Access-Control-Expose-Headers'] = 'Imagine-Seed'
-                response.headers['Imagine-Seed'] = seed
+            if mock:
+                path = './mock/king.png'
 
-                delta_time = time.time() - start_time
-                print(f'Generation time: {delta_time}s')
+            delta_time = time.time() - start_time
 
-                return response
-            except celery_exceptions.TimeoutError:
-                print('task.get timeout')
+            
+            
+            delta_time = time.time() - start_time
+            print(f'Generation time: {delta_time}s')
 
-    
-        response = make_response(send_file('./1x1.png', mimetype='image/png'))
-        response.headers['Imagine-Seed']   = seed
-        response.headers['Imagine-Taskid'] = task.id
-        response.headers['Imagine-Fileid'] = params['file_prefix']
-        response.headers['Access-Control-Expose-Headers'] = 'Imagine-Seed, Imagine-Taskid, Imagine-Fileid'
-        return response
+            return response_with_result(response_type, path, delta_time, seed)
+        except celery_exceptions.TimeoutError:
+            return timeout_error(response_type)
     else:
-        return jsonify({
-            'taskId': task.id,
-            'fileId': params['file_prefix'],
-            'seed':   seed
-        })
+        return response_when_in_queue(
+            response_type,
+            task.id,
+            params['file_prefix'],
+            time_in_queue,
+            seed
+        )
+        
 
+
+
+def handle_image_guide(request, params):
+    if 'imageGuide' in request.files and request.files['imageGuide'].filename != '':
+        path = os.path.join(tmp_directory, f"{global_prefix}_{current_id}.png")
+        request.files['imageGuide'].save(path)
+        params['image_guide'] = path
+
+        if 'maskForBlend' in request.files and \
+                request.files['maskForBlend'].filename != '':
+            mask_path = os.path.join(
+                tmp_directory, f"{global_prefix}_{current_id}_mask.png")
+            request.files['maskForBlend'].save(mask_path)
+            params['blend_mask'] = mask_path
+            params['mask_blur'] = max(request.form.get(
+                'maskBlur',  default=10, type=int), 0)
+        else:
+            params['strength'] = max(min(request.form.get(
+                'strength', default=0.5, type=float), 0.99), 0.01)
+
+    else:
+        params['image_guide'] = False
+
+
+def get_params(request):
+    form = request.form
+    return {
+        'prompt':     form.get('prompt',   default="countryside landscape, Trending on artstation."),
+        'W':          min(form.get('width',    default=512, type=int), 2048),
+        'H':          min(form.get('height',   default=512, type=int), 2048),
+        'scale':      form.get('guidance',     default=7.0, type=float),
+        'seed':       form.get('seed', default=random.randint(0, 99999999), type=int),
+        'steps':      min(form.get('steps',    default=50, type=int), 150),
+        'n_samples': min(form.get('samples',  default=1, type=int), 8),
+        'blend_mask': None,
+        'return_changes_only': form.get('returnChangesOnly', default=False, type=bool)
+    }
 
 
 
@@ -311,12 +312,9 @@ def run():
 def run_inpaint():
 
     level = auth_level(request)
-    if level == 'quota_expired':
-        return quota_expired()
-    elif level == 'unauthenticated':
-        return unauthenticated()
-    elif level == 'wrong_auth':
-        return wrong_auth()
+    error = error_response_for_level(level)
+    if (error is not None):
+        return error
 
     global current_id
 
@@ -358,33 +356,31 @@ def run_inpaint():
 
     imagine_db.set(task.id, task_time)
     
-    response_type = 'image'
+    response_type = request.headers.get('Accept')
 
-    if response_type == 'image':
-        if time_in_queue < max_time_to_wait_for_answer:
-            try:
-                task.get(timeout=max_time_to_wait_for_answer + 1)
-                reset_allowed_time(request)
-                path = f"{output_directory}/{params['file_prefix']}-0000.png"
-                if mock:
-                    path = './mock/king.png'
+    if time_in_queue < max_time_to_wait_for_answer:
+        try:
+            task.get(timeout=max_time_to_wait_for_answer + 1)
+            reset_allowed_time(request)
+            
+            path = f"{output_directory}/{params['file_prefix']}-0000.png"
+            if mock:
+                path = './mock/king.png'
 
-                response = make_response(send_file(path, download_name='image.png'))
-                return response
-            except celery_exceptions.TimeoutError:
-                print('task.get timeout')
-
-        response = make_response(
-            send_file('./1x1.png', mimetype='image/png'))
-        response.headers['Imagine-Taskid'] = task.id
-        response.headers['Imagine-Fileid'] = params['file_prefix']
-        response.headers['Access-Control-Expose-Headers'] = 'Imagine-Taskid, Imagine-Fileid'
-        return response
+            response = make_response(send_file(path, download_name='image.png'))
+            return response
+        except celery_exceptions.TimeoutError:
+            return timeout_error(response_type)
     else:
-        return jsonify({
-            'taskId': task.id,
-            'fileId': params['file_prefix']
-        })
+        return response_when_in_queue(
+            response_type,
+            task.id,
+            params['file_prefix'],
+            time_in_queue,
+            None
+        )
+    
+
 
 
 
@@ -450,28 +446,82 @@ def allowed_to_use(request):
         return time < datetime.datetime.now()
 
 
-def unauthenticated():
-    return error_response('unauthenticated')
 
-def wrong_auth():
-    return error_response('authentication failed')
+def response_with_result(response_type, path, delta_time, seed):
+    if response_type == 'image/png':
+        response = make_response(send_file(path, download_name='image.png'))
+        response.headers['Access-Control-Expose-Headers'] = 'Imagine-Seed'
+        response.headers['Imagine-Seed'] = seed
+        return response
+    else:
+        return jsonify({
+            'generationTime': delta_time,
+            'seed': seed,
+            'ok': 200,
+            'image': base64.b64encode(open(path, 'rb').read()).decode('utf-8')
+        })
 
-def quota_expired():
-    return error_response('quota expired')
 
-def job_too_long ():
-    return error_response('job too long for a guest')
+def response_when_in_queue(response_type, task_id, file_id, time_in_queue, seed):
+    if response_type == 'image/png':
+        response = make_response(send_file('./1x1.png', mimetype='image/png'))
+        response.headers['Imagine-Seed'] = seed
+        response.headers['Imagine-Taskid'] = task_id
+        response.headers['Imagine-Fileid'] = file_id
+        response.headers['Access-Control-Expose-Headers'] = 'Imagine-Seed, Imagine-Taskid, Imagine-Fileid'
+        return response
+    else:
+        params = {
+            'status': 'queued',
+            'estimatedTimeOfArrival': time_in_queue,
+            'taskId': task_id,
+            'fileId': file_id
+        }
 
-def job_too_soon():
-    return error_response('job too soon for a guest')
+        if (seed is not None):
+            params['seed'] = seed
+        
+        return jsonify(params)
+
+
+def error_response_for_level(level):
+    if level == 'quota_expired':
+        return quota_expired(), 401
+    elif level == 'unauthenticated':
+        return unauthenticated(), 401
+    elif level == 'wrong_auth':
+        return wrong_auth(), 401
+    else:
+        return False
 
 
 
-def error_response(text):
-    response = make_response(
-        send_file('./1x1.png', mimetype='image/png'))
-    response.headers['Imagine-Error'] = text
-    response.headers['Access-Control-Expose-Headers'] = 'Imagine-Error'
+def unauthenticated(response_type):
+    return error_response(response_type, 'unauthenticated')
+
+def wrong_auth(response_type):
+    return error_response(response_type, 'authentication failed')
+
+def quota_expired(response_type):
+    return error_response(response_type, 'quota expired')
+
+def job_too_long(response_type):
+    return error_response(response_type, 'job too long for a guest')
+
+def job_too_soon(response_type):
+    return error_response(response_type, 'job too soon for a guest')
+
+def timeout_error(response_type):
+    return error_response(response_type, 'timeout error')
+
+
+def error_response(response_type, text):
+    if response_type == 'image/png':
+        response = make_response(send_file('./1x1.png', mimetype='image/png'))
+        response.headers['Imagine-Error'] = text
+        response.headers['Access-Control-Expose-Headers'] = 'Imagine-Error'
+    else:
+        response = jsonify({'error': text})
     return response
 
 
